@@ -1,0 +1,111 @@
+version: "3.7"
+
+x-logging: &logging
+  logging:
+    driver: "json-file"
+    options:
+      max-file: "10"
+      max-size: "100m"
+
+services:
+  geth:
+    image: ethereum/client-go:${GETH_DOCKER_TAG}
+    restart: always
+    hostname: geth
+    #command: --goerli --http --http.port=8545 --http.addr=0.0.0.0 --http.vhosts="*" --allow-insecure-unlock --http.api="db,eth,net,web3,personal"
+    command: --datadir ./l15 --verbosity 4 --bootnodes enode://f73ca3cc5512041e35fc0aa89fee71af8cee9c678dbc8c0c4540655a3d540c3180aed8859ef3d998f30523f499d66caec75f4fb82c6acfec76641f91f5557390@35.234.103.138:30303,enode://2a85c28c49d67abe8d9fba63355334e43c7f445e48c8f4ad8f4ae97e8b2ef31502d0f9e9e3dbd32da2ee5a80ae93d6e2eb96f74d77b632e93ac80af7fb298f93@34.107.102.7:30303
+    ports:
+      - 30303:30303/tcp
+      - 30303:30303/udp
+      - 127.0.0.1:8545:8545
+    volumes:
+      - ./data/geth:/root/.ethereum
+    <<: *logging
+
+  beacon:
+#    image: prysm/beacon-chain
+#    build:
+#      context: ./.docker/Prysm
+#    restart: always
+#    hostname: beacon-chain
+    image: gcr.io/prysmaticlabs/prysm/beacon-chain:${PRYSM_DOCKER_TAG}
+    restart: always
+    hostname: beacon-chain
+    command: --config-file=/config/beacon.yaml --chain-id 22 --network-id 22 --deposit-contract 0xEEBbf8e25dB001f4EC9b889978DC79B302DF9Efd --contract-deployment-block 6871942
+    #command: --config-file=/config/beacon.yaml --chain-config-file=/config/beacon-chain.yaml
+    #command: --http-web3provider https://rpc.l14.lukso.network
+    ports:
+      - 127.0.0.1:3500:3500/tcp # for web-ui    
+      - 127.0.0.1:8080:8080/tcp # for web-ui
+      - 127.0.0.1:4000:4000
+      - 13000:13000/tcp
+      - 12000:12000/udp
+    networks:
+      default:
+        aliases:
+          - prysm_beacon_slasher
+    volumes:
+      - ./config/prysm/slasher/beacon.yaml:/config/beacon.yaml:ro
+      - ./config/prysm/slasher/beacon-chain.yaml:/config/beacon-chain.yaml:ro
+      - ./data/prysm/beacon-slasher:/data
+    <<: *logging
+
+  validator:
+    image: gcr.io/prysmaticlabs/prysm/validator:${PRYSM_DOCKER_TAG}
+    restart: on-failure
+    hostname: validator
+    depends_on:
+      - beacon
+    command: --config-file=/config/validator.yaml
+    ports:
+      - 127.0.0.1:8081:8081/tcp # for web-ui    
+      - 127.0.0.1:7500:7500/tcp # for web-ui
+    volumes:
+      - ./config/prysm/validator.yaml:/config/validator.yaml:ro
+      - ./data/prysm/validator:/data
+    <<: *logging
+
+#  slasher:
+#    image: gcr.io/prysmaticlabs/prysm/slasher:${PRYSM_DOCKER_TAG}
+#    restart: always
+#    hostname: slasher
+#    depends_on:
+#      - beacon
+#    command: --config-file=/config/slasher.yaml
+#    volumes:
+#      - ./config/prysm/slasher/slasher.yaml:/config/slasher.yaml:ro
+#      - ./data/prysm/slasher:/data
+#    <<: *logging
+
+  prometheus:
+    image: prom/prometheus:v2.19.0
+    user: $UID # https://github.com/prometheus/prometheus/issues/5976
+    restart: on-failure
+    hostname: prometheus
+    command: --storage.tsdb.retention.time=31d --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - 127.0.0.1:9090:9090
+    volumes:
+      - ./config/prometheus/prometheus-p.yaml:/etc/prometheus/prometheus.yml
+      - ./data/prometheus:/prometheus
+    <<: *logging
+
+  grafana:
+    image: grafana/grafana:7.3.4
+    restart: on-failure
+    hostname: grafana
+    user: "1000"
+    depends_on:
+      - prometheus
+    ports:
+      - 127.0.0.1:3000:3000
+    volumes:
+      - ./config/grafana/provisioning-p:/etc/grafana/provisioning
+      - ./data/grafana:/var/lib/grafana
+    <<: *logging
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    hostname: node-exporter
+    <<: *logging
+# EOF
